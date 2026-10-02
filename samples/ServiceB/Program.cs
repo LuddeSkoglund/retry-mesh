@@ -1,4 +1,4 @@
-using DistributedResilience;
+using RetryMesh;
 using Microsoft.Extensions.Http.Resilience;
 
 await ServiceBHost.Build(args).RunAsync();
@@ -11,8 +11,8 @@ public static class ServiceBHost
         // Keep the standalone demo independent of Windows Event Log write permissions.
         builder.Logging.ClearProviders();
         builder.Logging.AddConsole();
-        builder.Services.AddDistributedResilience();
-        var enabled = builder.Configuration.GetValue("DistributedResilience:Enabled", false);
+        builder.Services.AddRetryMesh();
+        var enabled = builder.Configuration.GetValue("RetryMesh:Enabled", false);
         var retry = builder.Services.AddHttpClient("downstream", client =>
             client.BaseAddress = new Uri(builder.Configuration["Downstream:BaseUrl"] ?? "http://localhost:5103"))
             .AddStandardResilienceHandler(options =>
@@ -27,7 +27,7 @@ public static class ServiceBHost
                     return default;
                 };
             });
-        if (enabled) retry.UseDistributedRetries("ServiceB");
+        if (enabled) retry.UseRetryMesh("ServiceB");
         var app = builder.Build();
         app.MapGet("/execute", async (IHttpClientFactory factory, ILoggerFactory logs, HttpContext context) =>
         {
@@ -37,7 +37,7 @@ public static class ServiceBHost
             if (context.Request.Query.ContainsKey("unrelated")) return Results.StatusCode(500);
             return response.IsSuccessStatusCode
                 ? Results.Ok()
-                : (IResult)new DistributedFailureResult(response);
+                : (IResult)new RetryMeshFailureResult(response);
         });
         return app;
     }

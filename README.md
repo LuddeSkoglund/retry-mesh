@@ -1,11 +1,11 @@
-# DistributedResilience
+# RetryMesh
 
-Retry locally. Propagate globally.
+**Retry locally. Propagate globally.**
 
 Stop nested retry policies from amplifying failures across .NET microservices.
 
 ```text
-Without DistributedResilience
+Without RetryMesh
 
 A retries 3x
 └── B retries 3x
@@ -15,19 +15,19 @@ C receives 9 requests
 ```
 
 ```text
-With DistributedResilience
+With RetryMesh
 
 A
 └── B retries 3x
     └── C
 
-A sees that downstream retries were exhausted
-and does not retry the whole operation.
+B propagates retry exhaustion.
+A suppresses its additional retry loop.
 
-C receives 3 requests
+C receives 3 requests.
 ```
 
-**Proof of concept · .NET 10 · NuGet preview packaging**
+**Preview 0.1.0-preview.1 · .NET 8 and .NET 10 · MIT license**
 
 Here, “3x” means **three total attempts: the original request plus two retries**.
 The integration suite verifies both exact counts against the real sample applications.
@@ -35,7 +35,7 @@ Coordination prevents six unnecessary calls, a **66.7% reduction** in this chain
 
 ## What this library does
 
-DistributedResilience coordinates existing retry policies. It does not implement retries,
+RetryMesh coordinates existing retry policies. It does not implement retries,
 replace Polly, or replace `Microsoft.Extensions.Http.Resilience`. Microsoft’s standard
 HTTP resilience handler still owns retries, timeouts, circuit breaking, rate limiting,
 and telemetry. This library wraps only the retry decision and adds response metadata
@@ -48,7 +48,10 @@ to understand the metadata.
 
 ## Run the proof
 
-Install the **.NET 10 SDK**. No Docker or external infrastructure is needed.
+Install the **.NET 10 SDK** plus the **.NET 8 ASP.NET Core runtime** to run the
+multi-target test suite. Installing both SDKs also supplies the runtimes.
+Samples target .NET 10; package and HTTP pipeline tests target .NET 8 and .NET 10.
+No Docker or external infrastructure is needed.
 
 ```sh
 dotnet restore
@@ -75,46 +78,43 @@ Retry amplification prevented: 6 requests
 Reduction: 66.7%
 ```
 
-## Use the preview packages
-
-Only `src/` projects are packable. Samples and tests never ship in NuGet packages.
+## Install
 
 ```sh
-dotnet pack -c Release -o artifacts/packages
+dotnet add package RetryMesh.Http --prerelease
 ```
 
-This creates `DistributedResilience.Core.0.1.0-preview.1.nupkg` and
-`DistributedResilience.Http.0.1.0-preview.1.nupkg`, each with this README embedded.
-The HTTP package depends on Core and Microsoft’s resilience package. Consumers normally
-need only **DistributedResilience.Http**. The packages have not been published to nuget.org.
-To test them locally, add `artifacts/packages` as a NuGet source alongside nuget.org.
+There is exactly one package: **RetryMesh.Http**. It includes the failure model, HTTP
+protocol, Microsoft resilience integration, and Minimal API propagation result.
+The command above works once the preview is available on your configured NuGet feed.
+This repository does not publish packages; see the local packaging instructions below.
 
-```sh
-dotnet add package DistributedResilience.Http --version 0.1.0-preview.1
-```
-
-The HTTP package targets `net10.0` and references `Microsoft.AspNetCore.App` because it
+The package targets **net8.0 and net10.0** and references `Microsoft.AspNetCore.App` because it
 includes the Minimal API propagation result. ASP.NET Core applications already have
 this framework reference. Other consumers must add it and install the ASP.NET Core runtime.
 
 ## Register coordination
 
 ```csharp
-using DistributedResilience;
+using RetryMesh;
 
-builder.Services.AddDistributedResilience();
+builder.Services.AddRetryMesh();
 
 builder.Services
-    .AddHttpClient("inventory", client =>
-        client.BaseAddress = new Uri("https://inventory.internal"))
+    .AddHttpClient<InventoryClient>()
     .AddStandardResilienceHandler(options =>
     {
         options.Retry.MaxRetryAttempts = 2; // 1 original + 2 retries = 3 attempts
     })
-    .UseDistributedRetries("CheckoutService");
+    .UseRetryMesh("OrdersService");
 ```
 
-Call `UseDistributedRetries` **once, after all retry configuration**. Its fluent receiver
+`InventoryClient` is your application’s typed client accepting an `HttpClient` in its
+constructor. Configure its base address for your trusted dependency. For a named client,
+replace `AddHttpClient<InventoryClient>()` with
+`AddHttpClient("inventory", client => client.BaseAddress = new Uri("https://inventory.internal"))`.
+
+Call `UseRetryMesh` **once, after all retry configuration**. Its fluent receiver
 is Microsoft’s `IHttpStandardResiliencePipelineBuilder`, returned by
 `AddStandardResilienceHandler`. Both named and typed clients work through that builder.
 The integration is pinned and tested against `Microsoft.Extensions.Http.Resilience` **10.0.0**.
@@ -129,11 +129,11 @@ app.MapGet("/execute", async (IHttpClientFactory clients, HttpContext context) =
 
     return downstream.IsSuccessStatusCode
         ? Results.Ok()
-        : (IResult)new DistributedFailureResult(downstream);
+        : (IResult)new RetryMeshFailureResult(downstream);
 });
 ```
 
-`DistributedFailureResult` snapshots the selected response’s status and validated metadata,
+`RetryMeshFailureResult` snapshots the selected response’s status and validated metadata,
 so the response can be disposed before the result is executed. It returns an empty body
 and forwards only protocol headers. It does not proxy arbitrary response headers or content.
 The helper intentionally avoids middleware or ambient request state: an unrelated application
@@ -147,7 +147,7 @@ error must not inherit retry exhaustion from an earlier downstream call. Return 
 3. When that predicate identifies the final response as retryable and its zero-based
    attempt number equals `MaxRetryAttempts`, the library attaches exhaustion metadata
    to that particular `HttpResponseMessage`. No more retry is possible at this point.
-4. B explicitly propagates that failure with `DistributedFailureResult`.
+4. B explicitly propagates that failure with `RetryMeshFailureResult`.
 5. A’s wrapped predicate sees valid exhaustion metadata before making its own retry
    decision, preserves the downstream failure identity, and returns `false`.
 
@@ -163,23 +163,23 @@ non-retryable final response is never marked as exhausted.
 ## HTTP protocol v0.1
 
 ```http
-Distributed-Retry-Status: exhausted
-Distributed-Retry-Attempts: 3
-Distributed-Retry-By: ServiceB
-Distributed-Retry-Failure-Id: a4c4d483faeb4cc195fc75695fb78c91
+RetryMesh-Status: exhausted
+RetryMesh-Attempts: 3
+RetryMesh-By: ServiceB
+RetryMesh-Failure-Id: a4c4d483faeb4cc195fc75695fb78c91
 ```
 
 | Header | Meaning |
 | --- | --- |
-| `Distributed-Retry-Status` | Currently only `exhausted` is supported. |
-| `Distributed-Retry-Attempts` | Total local attempts, including the original; integer ≥ 2. |
-| `Distributed-Retry-By` | Service that exhausted its policy. |
-| `Distributed-Retry-Failure-Id` | Identity of the failure, preserved across upstream hops. |
+| `RetryMesh-Status` | Currently only `exhausted` is supported. |
+| `RetryMesh-Attempts` | Total local attempts, including the original; integer ≥ 2. |
+| `RetryMesh-By` | Service that exhausted its policy. |
+| `RetryMesh-Failure-Id` | Identity of the failure, preserved across upstream hops. |
 
 All four headers are required and must have exactly one value. Service names and failure IDs
 are limited to 128 ASCII letters, digits, dots, underscores, or hyphens. Missing, duplicate,
 unknown, oversized, and malformed values are ignored. Successful responses never suppress
-retries, even if they carry these headers. Constants and parsing live in `DistributedRetryHeaders`.
+retries, even if they carry these headers. Constants and parsing live in `RetryMeshHeaders`.
 
 ## Run the services yourself
 
@@ -187,8 +187,8 @@ Start each command in its own terminal, from the repository root:
 
 ```sh
 dotnet run --project samples/ServiceC --no-launch-profile -- --urls=http://localhost:5103
-dotnet run --project samples/ServiceB --no-launch-profile -- --urls=http://localhost:5102 --DistributedResilience:Enabled=false
-dotnet run --project samples/ServiceA --no-launch-profile -- --urls=http://localhost:5101 --DistributedResilience:Enabled=false
+dotnet run --project samples/ServiceB --no-launch-profile -- --urls=http://localhost:5102 --RetryMesh:Enabled=false
+dotnet run --project samples/ServiceA --no-launch-profile -- --urls=http://localhost:5101 --RetryMesh:Enabled=false
 ```
 
 Then:
@@ -200,9 +200,9 @@ curl http://localhost:5103/stats
 # {"requestCount":9}
 ```
 
-Restart **A and B** with `--DistributedResilience:Enabled=true`, reset C, and repeat:
+Restart **A and B** with `--RetryMesh:Enabled=true`, reset C, and repeat:
 the counter is `3` and A’s 500 response contains exhaustion metadata from ServiceB.
-Alternatively set `DistributedResilience__Enabled=true` in the environment or edit appsettings.
+Alternatively set `RetryMesh__Enabled=true` in the environment or edit appsettings.
 `Downstream:BaseUrl` / `Downstream__BaseUrl` overrides each service’s downstream URL.
 
 | Service | Endpoint | Behavior |
@@ -228,35 +228,71 @@ the consuming application's control. CI runs the suite on both Windows and Linux
 ## Repository map
 
 ```text
-src/DistributedResilience.Core/          Failure model; no infrastructure dependencies
-src/DistributedResilience.Http/          Protocol, standard-handler extension, explicit IResult
-samples/ServiceA/                        Upstream caller
-samples/ServiceB/                        Downstream caller and failure propagator
-samples/ServiceC/                        Always-failing endpoint and atomic counter
-tests/DistributedResilience.Core.Tests/  Protocol and isolated HTTP pipeline tests
-tests/DistributedResilience.IntegrationTests/  Real three-service scenarios
-scripts/                                Automated comparison
-.github/workflows/ci.yml                 Build, test, pack, and upload NuGet artifacts
+src/RetryMesh.Http/                 One package: model, protocol, integration, IResult
+samples/ServiceA/                   Upstream caller
+samples/ServiceB/                   Downstream caller and failure propagator
+samples/ServiceC/                   Always-failing endpoint and atomic counter
+tests/RetryMesh.Http.Tests/         Protocol and pipeline tests on .NET 8 and .NET 10
+tests/RetryMesh.IntegrationTests/   Real three-service scenarios and logging regression
+scripts/                           Automated comparison
+.github/workflows/ci.yml            Windows/Linux build, test, pack, artifact upload
 ```
 
-## Limits and the path to NuGet v0.1
+## Trust boundary and known limitations
 
 This preview proves HTTP response coordination, not a globally bounded retry system.
 
-- **Trust:** headers are unauthenticated claims. Enable coordination only for trusted service
-  responses; gateways must preserve the protocol. An untrusted peer can otherwise suppress retries.
-- **Exceptions:** a final transport exception, cancellation, timeout, or open circuit has no
-  downstream HTTP response to mark. These follow the existing pipeline’s behavior. Applications
-  can map them to responses, but this preview does not claim exhaustion for those mappings.
+- **Trust:** use RetryMesh on HttpClients representing trusted service-to-service dependencies.
+  Headers are unauthenticated claims. Do not allow arbitrary third-party responses to control
+  retry decisions. Gateways must preserve the protocol. Signatures and authentication are outside
+  this preview; an untrusted peer could forge exhaustion metadata and suppress retries.
+- **Transport:** preview.1 coordinates HTTP failures where a response exists and can carry
+  metadata. Connection failures, DNS failures, transport exceptions, some timeouts, cancellation,
+  and an already-open circuit breaker provide no response to mark. They follow Microsoft's
+  existing behavior and are not coordinated. Mapping them to a 500 does not establish exhaustion.
 - **Scope:** only the standard HTTP retry handler is integrated. Hedging, gRPC, queues,
   distributed budgets, retry ownership, and arbitrary exception graphs are outside this PoC.
 - **Semantics:** applications choose whether they are forwarding the same failure. The library
   cannot infer causality after application code transforms or aggregates outcomes.
-- **Target:** only .NET 10 is supported. The public API and wire format are provisional.
+- **Compatibility:** .NET 8 and .NET 10 are supported. The public API and wire format are
+  provisional. All participating services must understand the RetryMesh header names.
 
-Before publishing a supported v0.1, choose a license and package ownership, review the public
-API and protocol compatibility policy, define a trust-boundary policy, add broader cancellation,
-timeout, concurrency, and framework compatibility tests, and decide whether the ASP.NET result
-should remain in the HTTP package. Configure reproducible/source-linked builds and a release
-workflow with NuGet credentials. This repository already builds local preview packages and
-verifies the core behavior in CI; it does not publish automatically.
+## Build a package for manual upload
+
+From the repository root:
+
+```powershell
+dotnet restore
+dotnet build -c Release
+dotnet test -c Release
+dotnet pack -c Release -o ./artifacts
+```
+
+The uploadable file is:
+
+```text
+artifacts/RetryMesh.Http.0.1.0-preview.1.nupkg
+```
+
+Only the library is packable. The package contains both target-framework assemblies,
+MIT metadata, the LICENSE, and this README. Its only package dependency is
+`Microsoft.Extensions.Http.Resilience` (minimum version 10.0.0), with transitive dependencies
+managed by NuGet. Samples, tests, and local artifacts are excluded. Generated packages and
+smoke-test outputs are ignored by Git. CI builds and uploads this file as an Actions artifact
+on Windows and Linux; it does not publish or create releases.
+
+To consume the package locally, add the absolute path to `artifacts` as a NuGet source,
+alongside nuget.org for Microsoft’s dependencies, then install the exact preview version:
+
+```sh
+dotnet add package RetryMesh.Http --version 0.1.0-preview.1
+```
+
+For manual publication, sign in to NuGet.org, choose **Upload Package**, select the `.nupkg`,
+review its metadata and ownership, and publish it yourself. Availability of the package ID
+and permissions for your NuGet account are checked by NuGet.org during upload. No API key,
+publishing secret, tag, or automated release is needed by this repository.
+
+Before a stable release, review API and protocol compatibility, add broader concurrency and
+transport coverage, and evaluate the ASP.NET framework dependency. This remains a preview
+of response-based retry coordination.

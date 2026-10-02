@@ -1,26 +1,26 @@
 using System.Net;
-using DistributedResilience;
+using RetryMesh;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace DistributedResilience.Core.Tests;
+namespace RetryMesh.Http.Tests;
 
 public class ProtocolTests
 {
-    private static DistributedRetryFailure Failure => new()
-    { FailureId = "abc-123", RetriedBy = "ServiceB", Attempts = 3, Outcome = DistributedRetryOutcome.Exhausted };
+    private static RetryMeshFailure Failure => new()
+    { FailureId = "abc-123", RetriedBy = "ServiceB", Attempts = 3, Outcome = RetryMeshOutcome.Exhausted };
     [Fact]
     public void ValidHeadersRoundTrip()
     {
         using var response = new HttpResponseMessage(HttpStatusCode.InternalServerError);
-        DistributedRetryHeaders.Write(response, Failure);
-        Assert.Equal(Failure, DistributedRetryHeaders.Read(response));
+        RetryMeshHeaders.Write(response, Failure);
+        Assert.Equal(Failure, RetryMeshHeaders.Read(response));
     }
     [Fact]
     public void MissingHeadersAreIgnored()
     {
         using var response = new HttpResponseMessage(HttpStatusCode.InternalServerError);
-        Assert.Null(DistributedRetryHeaders.Read(response));
+        Assert.Null(RetryMeshHeaders.Read(response));
     }
     [Theory]
     [InlineData("", "ServiceB", "abc", "exhausted")]
@@ -34,37 +34,37 @@ public class ProtocolTests
     public void MalformedMetadataIsIgnored(string attempts, string by, string id, string status)
     {
         using var response = new HttpResponseMessage(HttpStatusCode.InternalServerError);
-        response.Headers.TryAddWithoutValidation(DistributedRetryHeaders.Attempts, attempts);
-        response.Headers.TryAddWithoutValidation(DistributedRetryHeaders.RetriedBy, by);
-        response.Headers.TryAddWithoutValidation(DistributedRetryHeaders.FailureId, id);
-        response.Headers.TryAddWithoutValidation(DistributedRetryHeaders.Status, status);
-        Assert.Null(DistributedRetryHeaders.Read(response));
+        response.Headers.TryAddWithoutValidation(RetryMeshHeaders.Attempts, attempts);
+        response.Headers.TryAddWithoutValidation(RetryMeshHeaders.RetriedBy, by);
+        response.Headers.TryAddWithoutValidation(RetryMeshHeaders.FailureId, id);
+        response.Headers.TryAddWithoutValidation(RetryMeshHeaders.Status, status);
+        Assert.Null(RetryMeshHeaders.Read(response));
     }
     [Fact]
     public void DuplicateMetadataIsIgnored()
     {
         using var response = new HttpResponseMessage(HttpStatusCode.InternalServerError);
-        DistributedRetryHeaders.Write(response, Failure);
-        response.Headers.Add(DistributedRetryHeaders.Attempts, "3");
-        Assert.Null(DistributedRetryHeaders.Read(response));
+        RetryMeshHeaders.Write(response, Failure);
+        response.Headers.Add(RetryMeshHeaders.Attempts, "3");
+        Assert.Null(RetryMeshHeaders.Read(response));
     }
     [Fact]
     public void SuccessCannotClaimFailure()
     {
         using var response = new HttpResponseMessage(HttpStatusCode.OK);
-        DistributedRetryHeaders.Write(response, Failure);
-        Assert.Null(DistributedRetryHeaders.Read(response));
+        RetryMeshHeaders.Write(response, Failure);
+        Assert.Null(RetryMeshHeaders.Read(response));
     }
     [Fact]
     public async Task OnlyExplicitFailureResultPropagatesMetadata()
     {
         using var response = new HttpResponseMessage(HttpStatusCode.InternalServerError);
-        DistributedRetryHeaders.Write(response, Failure);
+        RetryMeshHeaders.Write(response, Failure);
         var forwarded = new DefaultHttpContext();
-        await new DistributedFailureResult(response).ExecuteAsync(forwarded);
-        Assert.Equal("abc-123", forwarded.Response.Headers[DistributedRetryHeaders.FailureId]);
+        await new RetryMeshFailureResult(response).ExecuteAsync(forwarded);
+        Assert.Equal("abc-123", forwarded.Response.Headers[RetryMeshHeaders.FailureId]);
         var unrelated = new DefaultHttpContext { RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider() };
         await Results.StatusCode(500).ExecuteAsync(unrelated);
-        Assert.False(unrelated.Response.Headers.ContainsKey(DistributedRetryHeaders.Status));
+        Assert.False(unrelated.Response.Headers.ContainsKey(RetryMeshHeaders.Status));
     }
 }

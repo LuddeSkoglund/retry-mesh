@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <PackageId>RetryMesh.Http</PackageId>
+    <Version>0.1.0-preview.1</Version>
+    <Authors>LuddeSkoglund</Authors>
+    <Description>Prevent retry amplification across .NET microservices by propagating downstream retry exhaustion.</Description>
+    <PackageTags>retry;resilience;microservices;http;distributed-systems;dotnet</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/LuddeSkoglund/retry-mesh</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildProjectDirectory)=/_/src/RetryMesh.Http</PathMap>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="10.0.0" />
+  </ItemGroup>
+
+</Project>

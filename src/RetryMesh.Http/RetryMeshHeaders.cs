@@ -1,17 +1,17 @@
 using System.Globalization;
 using System.Net.Http.Headers;
 
-namespace DistributedResilience;
+namespace RetryMesh;
 
 /// <summary>The version 0.1 HTTP response protocol. Untrusted or incomplete metadata is ignored.</summary>
-public static class DistributedRetryHeaders
+public static class RetryMeshHeaders
 {
-    public const string Status = "Distributed-Retry-Status";
-    public const string Attempts = "Distributed-Retry-Attempts";
-    public const string RetriedBy = "Distributed-Retry-By";
-    public const string FailureId = "Distributed-Retry-Failure-Id";
+    public const string Status = "RetryMesh-Status";
+    public const string Attempts = "RetryMesh-Attempts";
+    public const string RetriedBy = "RetryMesh-By";
+    public const string FailureId = "RetryMesh-Failure-Id";
 
-    public static DistributedRetryFailure? Read(HttpResponseMessage response)
+    public static RetryMeshFailure? Read(HttpResponseMessage response)
     {
         if (response.IsSuccessStatusCode) return null;
         var status = Single(response.Headers, Status);
@@ -21,14 +21,14 @@ public static class DistributedRetryHeaders
             !int.TryParse(Single(response.Headers, Attempts), NumberStyles.None,
                 CultureInfo.InvariantCulture, out var attempts) || attempts < 2)
             return null;
-        return new() { FailureId = id!, RetriedBy = by!, Attempts = attempts, Outcome = DistributedRetryOutcome.Exhausted };
+        return new() { FailureId = id!, RetriedBy = by!, Attempts = attempts, Outcome = RetryMeshOutcome.Exhausted };
     }
 
-    public static void Write(HttpResponseMessage response, DistributedRetryFailure failure)
+    public static void Write(HttpResponseMessage response, RetryMeshFailure failure)
     {
         ArgumentNullException.ThrowIfNull(failure);
         if (!ValidToken(failure.FailureId) || !ValidToken(failure.RetriedBy) ||
-            failure.Attempts < 2 || failure.Outcome != DistributedRetryOutcome.Exhausted)
+            failure.Attempts < 2 || failure.Outcome != RetryMeshOutcome.Exhausted)
             throw new ArgumentException("Invalid retry exhaustion metadata.", nameof(failure));
         Set(response.Headers, Status, "exhausted");
         Set(response.Headers, Attempts, failure.Attempts.ToString(CultureInfo.InvariantCulture));

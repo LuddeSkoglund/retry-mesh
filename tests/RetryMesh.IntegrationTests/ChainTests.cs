@@ -1,9 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
-using DistributedResilience;
+using RetryMesh;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace DistributedResilience.IntegrationTests;
+namespace RetryMesh.IntegrationTests;
 
 public class ChainTests
 {
@@ -15,10 +15,10 @@ public class ChainTests
         await using var c = ServiceCHost.Build(["--urls=http://127.0.0.1:0"]);
         await c.StartAsync();
         await using var b = ServiceBHost.Build(["--urls=http://127.0.0.1:0",
-            $"--Downstream:BaseUrl={c.Urls.Single()}", $"--DistributedResilience:Enabled={enabled}"]);
+            $"--Downstream:BaseUrl={c.Urls.Single()}", $"--RetryMesh:Enabled={enabled}"]);
         await b.StartAsync();
         await using var a = ServiceAHost.Build(["--urls=http://127.0.0.1:0",
-            $"--Downstream:BaseUrl={b.Urls.Single()}", $"--DistributedResilience:Enabled={enabled}"]);
+            $"--Downstream:BaseUrl={b.Urls.Single()}", $"--RetryMesh:Enabled={enabled}"]);
         await a.StartAsync();
         using var client = new HttpClient();
         using var reset = await client.PostAsync($"{c.Urls.Single()}/stats/reset", null);
@@ -28,7 +28,7 @@ public class ChainTests
         Assert.Equal(expected, c.Services.GetRequiredService<RequestCounter>().Count);
         var stats = await client.GetFromJsonAsync<Stats>($"{c.Urls.Single()}/stats");
         Assert.Equal(expected, stats!.RequestCount);
-        var failure = DistributedRetryHeaders.Read(response);
+        var failure = RetryMeshHeaders.Read(response);
         if (enabled)
         {
             Assert.NotNull(failure);
@@ -44,13 +44,13 @@ public class ChainTests
         await using var c = ServiceCHost.Build(["--urls=http://127.0.0.1:0"]);
         await c.StartAsync();
         await using var b = ServiceBHost.Build(["--urls=http://127.0.0.1:0",
-            $"--Downstream:BaseUrl={c.Urls.Single()}", "--DistributedResilience:Enabled=true"]);
+            $"--Downstream:BaseUrl={c.Urls.Single()}", "--RetryMesh:Enabled=true"]);
         await b.StartAsync();
         using var client = new HttpClient();
         using var response = await client.GetAsync($"{b.Urls.Single()}/execute?unrelated=true");
         Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
         Assert.Equal(3, c.Services.GetRequiredService<RequestCounter>().Count);
-        Assert.Null(DistributedRetryHeaders.Read(response));
+        Assert.Null(RetryMeshHeaders.Read(response));
     }
     private sealed record Stats(int RequestCount);
 }

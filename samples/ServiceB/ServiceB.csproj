@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\DistributedResilience.Http\DistributedResilience.Http.csproj" />
+    <ProjectReference Include="..\..\src\RetryMesh.Http\RetryMesh.Http.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

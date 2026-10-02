@@ -1,19 +1,19 @@
 using Microsoft.AspNetCore.Http;
 
-namespace DistributedResilience;
+namespace RetryMesh;
 
 /// <summary>Explicitly forwards the selected downstream failure, including validated exhaustion metadata.</summary>
-public sealed class DistributedFailureResult : IResult
+public sealed class RetryMeshFailureResult : IResult
 {
     private readonly int _statusCode;
-    private readonly DistributedRetryFailure? _failure;
+    private readonly RetryMeshFailure? _failure;
 
-    public DistributedFailureResult(HttpResponseMessage downstreamResponse)
+    public RetryMeshFailureResult(HttpResponseMessage downstreamResponse)
     {
         if (downstreamResponse.IsSuccessStatusCode)
             throw new ArgumentException("Expected a failed downstream response.", nameof(downstreamResponse));
         _statusCode = (int)downstreamResponse.StatusCode;
-        _failure = DistributedRetryHeaders.Read(downstreamResponse);
+        _failure = RetryMeshHeaders.Read(downstreamResponse);
     }
 
     public Task ExecuteAsync(HttpContext context)
@@ -22,7 +22,7 @@ public sealed class DistributedFailureResult : IResult
         if (_failure is not null)
         {
             using var metadata = new HttpResponseMessage(System.Net.HttpStatusCode.InternalServerError);
-            DistributedRetryHeaders.Write(metadata, _failure);
+            RetryMeshHeaders.Write(metadata, _failure);
             foreach (var header in metadata.Headers)
                 context.Response.Headers[header.Key] = header.Value.ToArray();
         }
