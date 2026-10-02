@@ -8,6 +8,9 @@ public static class ServiceAHost
     public static WebApplication Build(string[] args)
     {
         var builder = WebApplication.CreateBuilder(args);
+        // Keep the standalone demo independent of Windows Event Log write permissions.
+        builder.Logging.ClearProviders();
+        builder.Logging.AddConsole();
         builder.Services.AddDistributedResilience();
         var enabled = builder.Configuration.GetValue("DistributedResilience:Enabled", false);
         var retry = builder.Services.AddHttpClient("downstream", client =>

@@ -217,6 +217,14 @@ Alternatively set `DistributedResilience__Enabled=true` in the environment or ed
 The samples log initial attempts, retries, C’s request numbers, exhaustion, failure identity,
 and upstream suppression. Avoid concurrent demo traffic while resetting the shared sample counter.
 
+### Windows logging permissions
+
+The sample hosts explicitly use console logging. They do not write to Windows Event Log,
+so `dotnet test` and the demo do not require administrator rights or Event Log source setup.
+This also keeps Polly's warning/error telemetry visible without making retry execution depend
+on machine-specific Event Log permissions. The NuGet library leaves logging providers under
+the consuming application's control. CI runs the suite on both Windows and Linux.
+
 ## Repository map
 
 ```text
