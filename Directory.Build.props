@@ -1,0 +1,15 @@
+<Project>
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Version>0.1.0-preview.1</Version>
+    <Authors>LuddeSkoglund</Authors>
+    <RepositoryUrl>https://github.com/LuddeSkoglund/retry-mesh</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>Coordinate existing HTTP retry policies across .NET services by propagating downstream retry exhaustion.</Description>
+    <PackageTags>resilience;http;retry;distributed;microservices</PackageTags>
+    <IsPackable>false</IsPackable>
+    <WarnOnPackingNonPackableProject>false</WarnOnPackingNonPackableProject>
+  </PropertyGroup>
+</Project>
