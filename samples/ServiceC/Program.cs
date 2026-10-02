@@ -12,19 +12,40 @@ public static class ServiceCHost
 {
     public static WebApplication Build(string[] args)
     {
-        var builder = WebApplication.CreateBuilder(args);
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = args, ApplicationName = typeof(ServiceCHost).Assembly.FullName });
         // Keep the standalone demo independent of Windows Event Log write permissions.
         builder.Logging.ClearProviders();
         builder.Logging.AddConsole();
         builder.Services.AddSingleton<RequestCounter>();
+        builder.Services.AddControllers();
         var app = builder.Build();
-        app.MapGet("/fail", (RequestCounter counter, ILoggerFactory logs) =>
+        // Optional fake external protocol claims for the trust-boundary demo.
+        if (builder.Configuration.GetValue("FakeMetadata", false))
         {
-            logs.CreateLogger("ServiceC").LogInformation("ServiceC: request {RequestNumber}", counter.Increment());
-            return Results.StatusCode(500);
-        });
+            app.Use(async (context, next) =>
+            {
+                context.Response.Headers["RetryMesh-Status"] = "exhausted";
+                context.Response.Headers["RetryMesh-Attempts"] = "99";
+                context.Response.Headers["RetryMesh-By"] = "FakeExternal";
+                context.Response.Headers["RetryMesh-Failure-Id"] = "fake";
+                await next(context);
+            });
+        }
+        app.MapControllers();
         app.MapGet("/stats", (RequestCounter counter) => Results.Ok(new { requestCount = counter.Count }));
         app.MapPost("/stats/reset", (RequestCounter counter) => { counter.Reset(); return Results.NoContent(); });
         return app;
+    }
+}
+
+[Microsoft.AspNetCore.Mvc.ApiController]
+[Microsoft.AspNetCore.Mvc.Route("fail")]
+public sealed class ServiceCController(RequestCounter counter) : Microsoft.AspNetCore.Mvc.ControllerBase
+{
+    [Microsoft.AspNetCore.Mvc.HttpGet]
+    public Microsoft.AspNetCore.Mvc.IActionResult Get()
+    {
+        counter.Increment();
+        return StatusCode(500);
     }
 }

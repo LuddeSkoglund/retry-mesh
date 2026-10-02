@@ -7,11 +7,12 @@ public static class ServiceAHost
 {
     public static WebApplication Build(string[] args)
     {
-        var builder = WebApplication.CreateBuilder(args);
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = args, ApplicationName = typeof(ServiceAHost).Assembly.FullName });
         // Keep the standalone demo independent of Windows Event Log write permissions.
         builder.Logging.ClearProviders();
         builder.Logging.AddConsole();
-        builder.Services.AddRetryMesh();
+        builder.Services.AddControllers();
+        builder.Services.AddSingleton<ServiceACounter>();
         var enabled = builder.Configuration.GetValue("RetryMesh:Enabled", false);
         var retry = builder.Services.AddHttpClient("downstream", client =>
             client.BaseAddress = new Uri(builder.Configuration["Downstream:BaseUrl"] ?? "http://localhost:5102"))
@@ -27,18 +28,36 @@ public static class ServiceAHost
                     return default;
                 };
             });
-        if (enabled) retry.UseRetryMesh("ServiceA");
+        if (enabled) retry.UseRetryMesh("ServiceA", options => options.TrustDownstreamMetadata = true);
         var app = builder.Build();
-        app.MapGet("/execute", async (IHttpClientFactory factory, ILoggerFactory logs, HttpContext context) =>
+        app.UseExceptionHandler(handler => handler.Run(context =>
         {
-            logs.CreateLogger("ServiceA").LogInformation("ServiceA: downstream attempt 1");
-            using var response = await factory.CreateClient("downstream").GetAsync("/execute", context.RequestAborted);
-            // Deliberately unrelated error: no downstream response is forwarded.
-            if (context.Request.Query.ContainsKey("unrelated")) return Results.StatusCode(500);
-            return response.IsSuccessStatusCode
-                ? Results.Ok()
-                : (IResult)new RetryMeshFailureResult(response);
-        });
+            context.Response.StatusCode = 500;
+            return Task.CompletedTask;
+        }));
+        if (enabled) app.UseRetryMesh();
+        app.MapControllers();
         return app;
+    }
+}
+
+public sealed class ServiceACounter
+{
+    private int _count;
+    public int Count => Volatile.Read(ref _count);
+    public void Increment() => Interlocked.Increment(ref _count);
+}
+
+[Microsoft.AspNetCore.Mvc.ApiController]
+[Microsoft.AspNetCore.Mvc.Route("execute")]
+public sealed class ServiceAController(IHttpClientFactory factory, ServiceACounter counter) : Microsoft.AspNetCore.Mvc.ControllerBase
+{
+    [Microsoft.AspNetCore.Mvc.HttpGet]
+    public async Task<Microsoft.AspNetCore.Mvc.IActionResult> Get(CancellationToken cancellationToken)
+    {
+        counter.Increment();
+        using var response = await factory.CreateClient("downstream").GetAsync("/execute", cancellationToken);
+        if (Request.Query.ContainsKey("unrelated")) throw new InvalidOperationException("Unrelated application failure");
+        return StatusCode((int)response.StatusCode);
     }
 }

@@ -56,13 +56,17 @@ public class ProtocolTests
         Assert.Null(RetryMeshHeaders.Read(response));
     }
     [Fact]
-    public async Task OnlyExplicitFailureResultPropagatesMetadata()
+    public async Task ExplicitFailureResultForwardsOnlySelectedMetadataWithoutMiddleware()
     {
         using var response = new HttpResponseMessage(HttpStatusCode.InternalServerError);
         RetryMeshHeaders.Write(response, Failure);
+        response.Headers.Add("X-Unrelated", "private");
+        var result = new RetryMeshFailureResult(response);
+        response.Dispose();
         var forwarded = new DefaultHttpContext();
-        await new RetryMeshFailureResult(response).ExecuteAsync(forwarded);
+        await result.ExecuteAsync(forwarded);
         Assert.Equal("abc-123", forwarded.Response.Headers[RetryMeshHeaders.FailureId]);
+        Assert.False(forwarded.Response.Headers.ContainsKey("X-Unrelated"));
         var unrelated = new DefaultHttpContext { RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider() };
         await Results.StatusCode(500).ExecuteAsync(unrelated);
         Assert.False(unrelated.Response.Headers.ContainsKey(RetryMeshHeaders.Status));
