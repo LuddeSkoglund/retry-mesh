@@ -2,163 +2,166 @@
 
 **Retry locally. Propagate globally.**
 
-Stop nested retry policies from amplifying failures across .NET microservices.
+RetryMesh.Http **0.1.0-preview.2** coordinates Microsoft's existing HTTP retry policy across .NET 8 and .NET 10 services. Configure HttpClients, add middleware, and leave MVC controllers and Minimal API endpoints alone.
 
-```text
-Without RetryMesh
+With two retries at A and B (three total attempts each), the real MVC A → B → C integration tests verify **A/B/C = 1/3/9 without coordination and 1/1/3 with RetryMesh**. The controllers contain no RetryMesh code.
 
-A retries 3x
-└── B retries 3x
-    └── C
+## Automatic propagation: normal setup
 
-C receives 9 requests
-```
-
-```text
-With RetryMesh
-
-A
-└── B retries 3x
-    └── C
-
-B propagates retry exhaustion.
-A suppresses its additional retry loop.
-
-C receives 3 requests.
-```
-
-**Preview 0.1.0-preview.1 · .NET 8 and .NET 10 · MIT license**
-
-Here, “3x” means **three total attempts: the original request plus two retries**.
-The integration suite verifies both exact counts against the real sample applications.
-Coordination prevents six unnecessary calls, a **66.7% reduction** in this chain.
-
-## What this library does
-
-RetryMesh coordinates existing retry policies. It does not implement retries,
-replace Polly, or replace `Microsoft.Extensions.Http.Resilience`. Microsoft’s standard
-HTTP resilience handler still owns retries, timeouts, circuit breaking, rate limiting,
-and telemetry. This library wraps only the retry decision and adds response metadata
-when a specific downstream HTTP failure exhausts that policy.
-
-There is no central server, database, Redis, message broker, or topology registry.
-Services can adopt the protocol incrementally: services without coordination continue
-using their normal policies. The full 9 → 3 benefit requires both B to propagate and A
-to understand the metadata.
-
-## Run the proof
-
-Install the **.NET 10 SDK** plus the **.NET 8 ASP.NET Core runtime** to run the
-multi-target test suite. Installing both SDKs also supplies the runtimes.
-Samples target .NET 10; package and HTTP pipeline tests target .NET 8 and .NET 10.
-No Docker or external infrastructure is needed.
+Install the package from your configured NuGet feed. For this locally built preview,
+add `artifacts` as a local NuGet source, then use:
 
 ```sh
-dotnet restore
-dotnet build
-dotnet test
-bash scripts/demo.sh
+dotnet add package RetryMesh.Http --version 0.1.0-preview.2
 ```
-
-On Windows:
-
-```powershell
-./scripts/demo.ps1
-```
-
-The demo runs the two integration scenarios. Each scenario starts A, B, and C **in the
-test process**, using real Kestrel HTTP endpoints on automatically assigned localhost
-ports, resets C’s counter, executes one logical request, and asserts the exact count.
-It disposes all hosts afterward. The script prints the comparison only if both assertions pass:
-
-```text
-Without coordination: ServiceC requests: 9
-With coordination:    ServiceC requests: 3
-Retry amplification prevented: 6 requests
-Reduction: 66.7%
-```
-
-## Install
-
-```sh
-dotnet add package RetryMesh.Http --prerelease
-```
-
-There is exactly one package: **RetryMesh.Http**. It includes the failure model, HTTP
-protocol, Microsoft resilience integration, and Minimal API propagation result.
-The command above works once the preview is available on your configured NuGet feed.
-This repository does not publish packages; see the local packaging instructions below.
-
-The package targets **net8.0 and net10.0** and references `Microsoft.AspNetCore.App` because it
-includes the Minimal API propagation result. ASP.NET Core applications already have
-this framework reference. Other consumers must add it and install the ASP.NET Core runtime.
-
-## Register coordination
 
 ```csharp
 using RetryMesh;
 
-builder.Services.AddRetryMesh();
-
 builder.Services
-    .AddHttpClient<InventoryClient>()
+    .AddHttpClient<OrdersClient>()
     .AddStandardResilienceHandler(options =>
     {
-        options.Retry.MaxRetryAttempts = 2; // 1 original + 2 retries = 3 attempts
+        options.Retry.MaxRetryAttempts = 2;
     })
-    .UseRetryMesh("OrdersService");
+    .UseRetryMesh("CheckoutService", options =>
+    {
+        options.TrustDownstreamMetadata = true;
+    });
+
+var app = builder.Build();
+app.UseExceptionHandler("/error"); // Configure your exception endpoint.
+app.UseRetryMesh();                 // After exception handling, before endpoints.
+app.MapControllers();
 ```
 
-`InventoryClient` is your application’s typed client accepting an `HttpClient` in its
-constructor. Configure its base address for your trusted dependency. For a named client,
-replace `AddHttpClient<InventoryClient>()` with
-`AddHttpClient("inventory", client => client.BaseAddress = new Uri("https://inventory.internal"))`.
-
-Call `UseRetryMesh` **once, after all retry configuration**. Its fluent receiver
-is Microsoft’s `IHttpStandardResiliencePipelineBuilder`, returned by
-`AddStandardResilienceHandler`. Both named and typed clients work through that builder.
-The integration is pinned and tested against `Microsoft.Extensions.Http.Resilience` **10.0.0**.
-
-### Propagate the same failure explicitly
+`OrdersClient` is your typed client accepting an HttpClient. Named clients also work:
 
 ```csharp
-app.MapGet("/execute", async (IHttpClientFactory clients, HttpContext context) =>
-{
-    using var downstream = await clients.CreateClient("inventory")
-        .GetAsync("/execute", context.RequestAborted);
-
-    return downstream.IsSuccessStatusCode
-        ? Results.Ok()
-        : (IResult)new RetryMeshFailureResult(downstream);
-});
+builder.Services.AddHttpClient("ServiceC", client =>
+    client.BaseAddress = new Uri("http://localhost:5103"))
+    .AddStandardResilienceHandler(options => options.Retry.MaxRetryAttempts = 2)
+    .UseRetryMesh("ServiceB"); // Untrusted downstream by default.
 ```
 
-`RetryMeshFailureResult` snapshots the selected response’s status and validated metadata,
-so the response can be disposed before the result is executed. It returns an empty body
-and forwards only protocol headers. It does not proxy arbitrary response headers or content.
-The helper intentionally avoids middleware or ambient request state: an unrelated application
-error must not inherit retry exhaustion from an earlier downstream call. Return an ordinary
-`Results.StatusCode(500)` for such an error. No application code needs to inspect headers.
+Existing MVC controllers stay ordinary:
 
-## How the decision works
+```csharp
+[HttpGet]
+public async Task<IActionResult> Get(CancellationToken cancellationToken)
+{
+    using var response = await httpClientFactory.CreateClient("ServiceC")
+        .GetAsync("/fail", cancellationToken);
+    return StatusCode((int)response.StatusCode);
+}
+```
 
-1. B’s existing Microsoft retry policy sends three requests to C.
-2. The wrapped `ShouldHandle` delegates to the original predicate for normal responses.
-3. When that predicate identifies the final response as retryable and its zero-based
-   attempt number equals `MaxRetryAttempts`, the library attaches exhaustion metadata
-   to that particular `HttpResponseMessage`. No more retry is possible at this point.
-4. B explicitly propagates that failure with `RetryMeshFailureResult`.
-5. A’s wrapped predicate sees valid exhaustion metadata before making its own retry
-   decision, preserves the downstream failure identity, and returns `false`.
+Minimal APIs can return `Results.StatusCode((int)response.StatusCode)` in the same way.
+No RetryMesh result is needed. Call the HttpClient `UseRetryMesh` once, **after all retry configuration**.
+That call registers RetryMesh's services automatically, so the normal setup needs only the
+client call and `app.UseRetryMesh()`. `AddRetryMesh(options => ...)` is optional, for changing
+the propagation policy. Multiple clients do not duplicate core registrations or overwrite
+explicit policy configuration, regardless of registration order.
 
-There are no handwritten retry loops or extra delegating handlers. Responses are examined
-inside the existing retry strategy, which avoids handler ordering ambiguity. Microsoft’s
-remaining standard strategies retain their configuration and behavior. For example, circuit
-breakers still observe failures and can open; coordination does not turn failures into success.
+RetryMesh wraps only `Retry.ShouldHandle`, preserving the original predicate and OnRetry callback.
+There is no additional retry handler or handwritten retry loop. Microsoft.Extensions.Http.Resilience
+10.0.0 retains responsibility for retries, timeouts, circuit breaking, rate limiting and telemetry.
 
-The tests verify that Polly evaluates the predicate on the final attempt, that a caller’s
-custom retry predicate and `OnRetry` callback remain active, and that a successful or
-non-retryable final response is never marked as exhausted.
+## Trusted internal services and external APIs
+
+Trust is configured **per HttpClient** and defaults to **false**:
+
+```csharp
+// A → internal B: accept B's exhaustion claims.
+.UseRetryMesh("ServiceA", options => options.TrustDownstreamMetadata = true);
+
+// B → external C: ignore C's claims, create metadata for B's own exhaustion.
+.UseRetryMesh("ServiceB", options => options.TrustDownstreamMetadata = false);
+```
+
+`true` means another trusted RetryMesh service; `false` means external or untrusted.
+Headers are unauthenticated claims. Use true only for a dependency whose responses and communication
+path you trust. RetryMesh does not authenticate peers or sign metadata.
+
+**External C needs no cooperation.** B retries C normally, creates local exhaustion metadata after
+three failed attempts, and A can trust that claim from B. Creating local metadata and accepting
+downstream claims are separate operations.
+
+The tested A → B → fake external C scenario returns forged metadata claiming `FakeExternal`,
+99 attempts. B removes and ignores those claims, performs three attempts, then creates legitimate
+metadata for **ServiceB, 3 attempts**, with a new failure ID. A accepts B's claim and suppresses its
+retries. C receives exactly **3 calls**. Removing untrusted protocol headers also prevents the
+explicit result from forwarding those claims from a RetryMesh-enabled client.
+
+## Automatic policy and limitations
+
+Propagation defaults to `RetryMeshPropagationMode.Automatic`. This default serves common
+proxy-style flows without controller changes. Registration and middleware opt the service into
+conservative inference; they do **not** guarantee exact causal identity.
+
+Middleware installs a private feature in `HttpContext.Features`. The retry predicate snapshots
+failure ID, retrying service, attempt count and downstream status into that request's candidate
+list. Response disposal does not affect the snapshot. IHttpContextAccessor finds the current
+request from pooled client pipelines; there is no custom AsyncLocal or global candidate store.
+Outside ASP.NET Core, client coordination still works, but no automatic response propagation occurs.
+
+Immediately before headers start, `HttpResponse.OnStarting` requires:
+
+- An outgoing failure status (400 or higher).
+- Exactly one exhausted candidate matching that status. Multiple matching operations are ambiguous,
+  even if their failure IDs match; nothing propagates.
+- No invalidation. A successful or otherwise non-retryable downstream outcome after a pending failure
+  permanently invalidates the request's candidates. An observed downstream exception also invalidates them.
+- No exception handled by ASP.NET exception middleware replacing the outcome.
+- No explicit result already selecting its own response.
+
+Different exhausted statuses can coexist: 500 followed by 503 propagates only the unique 503
+candidate when the final status is 503. Two exhausted 500 calls followed by 500 propagate nothing.
+Successful final responses, status mismatches and retry recovery do not propagate metadata. A
+successful replacement invalidates pending candidates even if application code later returns 500.
+
+Place `app.UseRetryMesh()` **after exception handling and before endpoints**. It invalidates on
+exceptions escaping downstream middleware and rethrows so the outer handler can render its response.
+OnStarting also checks IExceptionHandlerFeature, covering an inner ASP.NET exception handler.
+Exception-handler re-execution preserves invalidated state. Tests exercise both orders and path
+re-execution. Custom middleware swallowing exceptions without the standard feature cannot be detected
+if it runs inside RetryMesh.
+
+**Fundamental ambiguity:** C exhausts with 500; application code then intentionally returns an
+unrelated `StatusCode(500)`. Object identity has been discarded. Without observed invalidation,
+automatic mode propagates the candidate. Middleware cannot distinguish those failures. Choose
+explicit mode for aggregators or applications where this ambiguity is unacceptable. Application-caught
+exceptions and successful work through clients without RetryMesh are also invisible to the tracker.
+
+Candidate access is protected by a lock and multiple matching parallel failures are rejected.
+This is not a general causal model for concurrent or detached work. Await downstream work before
+starting the response. A response already started cannot be changed retroactively or have its
+headers withdrawn after a later exception.
+
+Coordination is **response-based**. Transport/DNS failures, cancellation, timeouts and open circuit
+breakers without a response cannot create exhaustion metadata. Mapping them to 500 does not establish
+exhaustion. Only the standard HTTP resilience retry strategy is supported; hedging, gRPC, queues,
+distributed retry budgets and arbitrary exception graphs are outside this preview.
+
+## Explicit failure identity
+
+```csharp
+builder.Services.AddRetryMesh(options =>
+    options.PropagationMode = RetryMeshPropagationMode.Explicit);
+```
+
+Configure clients and middleware as above. Middleware writes no automatic metadata in this mode.
+Select the actual downstream response explicitly:
+
+```csharp
+return new RetryMeshFailureResult(response);
+```
+
+The helper implements both `IResult` and `IActionResult`. It snapshots the chosen response's status
+and validated metadata, works after disposal, returns an empty body and forwards only protocol
+headers. It can also be used in automatic mode, where explicit selection takes precedence. The
+caller is responsible for selecting the actual failure and its trusted provenance; the helper
+itself does not authenticate raw downstream claims.
 
 ## HTTP protocol v0.1
 
@@ -169,21 +172,35 @@ RetryMesh-By: ServiceB
 RetryMesh-Failure-Id: a4c4d483faeb4cc195fc75695fb78c91
 ```
 
-| Header | Meaning |
-| --- | --- |
-| `RetryMesh-Status` | Currently only `exhausted` is supported. |
-| `RetryMesh-Attempts` | Total local attempts, including the original; integer ≥ 2. |
-| `RetryMesh-By` | Service that exhausted its policy. |
-| `RetryMesh-Failure-Id` | Identity of the failure, preserved across upstream hops. |
+All four headers are required, each with exactly one value. Attempts must be an integer ≥ 2;
+service names and failure IDs allow up to 128 ASCII letters, digits, dots, underscores or hyphens.
+Missing, duplicate, malformed, unknown and oversized metadata is ignored. Successful responses
+never suppress retries. Downstream status stays internal to candidate selection; no new wire
+header is needed. Arbitrary headers and content are never proxied.
 
-All four headers are required and must have exactly one value. Service names and failure IDs
-are limited to 128 ASCII letters, digits, dots, underscores, or hyphens. Missing, duplicate,
-unknown, oversized, and malformed values are ignored. Successful responses never suppress
-retries, even if they carry these headers. Constants and parsing live in `RetryMeshHeaders`.
+Trusted valid metadata suppresses retry and preserves downstream identity. Otherwise the original
+predicate decides. On the last retryable failed HTTP response, RetryMesh creates local metadata
+if at least one retry was configured. ILogger Information/Debug logs describe local exhaustion,
+candidate recording, suppression, untrusted claims, propagation and skipped propagation reasons.
+Logging providers belong to the consuming application.
 
-## Run the services yourself
+## Run the proof
 
-Start each command in its own terminal, from the repository root:
+Install the .NET 10 SDK and .NET 8 ASP.NET Core runtime (or both SDKs).
+
+```powershell
+dotnet restore
+dotnet build -c Release
+dotnet test -c Release
+./scripts/demo.ps1
+# Linux/macOS: bash scripts/demo.sh
+```
+
+The demo starts real MVC sample hosts on temporary localhost ports, asserts exact counts and
+disposes them. It prints 9 → 3 only after tests pass. Samples use console logging without requiring
+Windows Event Log permissions. There is no Docker or external infrastructure requirement.
+
+Run manually in three terminals from the repository root:
 
 ```sh
 dotnet run --project samples/ServiceC --no-launch-profile -- --urls=http://localhost:5103
@@ -191,108 +208,26 @@ dotnet run --project samples/ServiceB --no-launch-profile -- --urls=http://local
 dotnet run --project samples/ServiceA --no-launch-profile -- --urls=http://localhost:5101 --RetryMesh:Enabled=false
 ```
 
-Then:
+POST `http://localhost:5103/stats/reset`, GET `http://localhost:5101/execute`, then GET
+`http://localhost:5103/stats`: 9 calls. Restart A and B with `--RetryMesh:Enabled=true`, reset
+and repeat: 3 calls and ServiceB metadata. `Downstream:BaseUrl` overrides each dependency URL.
+ServiceB `/execute?unrelated=true` throws after downstream exhaustion and returns 500 without
+RetryMesh metadata through its exception handler. ServiceC `--FakeMetadata=true` enables the
+forged external claims demonstration.
 
-```sh
-curl -X POST http://localhost:5103/stats/reset
-curl -i http://localhost:5101/execute
-curl http://localhost:5103/stats
-# {"requestCount":9}
-```
-
-Restart **A and B** with `--RetryMesh:Enabled=true`, reset C, and repeat:
-the counter is `3` and A’s 500 response contains exhaustion metadata from ServiceB.
-Alternatively set `RetryMesh__Enabled=true` in the environment or edit appsettings.
-`Downstream:BaseUrl` / `Downstream__BaseUrl` overrides each service’s downstream URL.
-
-| Service | Endpoint | Behavior |
-| --- | --- | --- |
-| A | `GET /execute` | Calls B with three total attempts available. |
-| B | `GET /execute` | Calls C with three total attempts available. |
-| B | `GET /execute?unrelated=true` | Demonstrates an unrelated 500 without propagated metadata. |
-| C | `GET /fail` | Atomically increments its counter and returns 500. |
-| C | `GET /stats` | Returns the request counter. |
-| C | `POST /stats/reset` | Atomically resets the counter. |
-
-The samples log initial attempts, retries, C’s request numbers, exhaustion, failure identity,
-and upstream suppression. Avoid concurrent demo traffic while resetting the shared sample counter.
-
-### Windows logging permissions
-
-The sample hosts explicitly use console logging. They do not write to Windows Event Log,
-so `dotnet test` and the demo do not require administrator rights or Event Log source setup.
-This also keeps Polly's warning/error telemetry visible without making retry execution depend
-on machine-specific Event Log permissions. The NuGet library leaves logging providers under
-the consuming application's control. CI runs the suite on both Windows and Linux.
-
-## Repository map
-
-```text
-src/RetryMesh.Http/                 One package: model, protocol, integration, IResult
-samples/ServiceA/                   Upstream caller
-samples/ServiceB/                   Downstream caller and failure propagator
-samples/ServiceC/                   Always-failing endpoint and atomic counter
-tests/RetryMesh.Http.Tests/         Protocol and pipeline tests on .NET 8 and .NET 10
-tests/RetryMesh.IntegrationTests/   Real three-service scenarios and logging regression
-scripts/                           Automated comparison
-.github/workflows/ci.yml            Windows/Linux build, test, pack, artifact upload
-```
-
-## Trust boundary and known limitations
-
-This preview proves HTTP response coordination, not a globally bounded retry system.
-
-- **Trust:** use RetryMesh on HttpClients representing trusted service-to-service dependencies.
-  Headers are unauthenticated claims. Do not allow arbitrary third-party responses to control
-  retry decisions. Gateways must preserve the protocol. Signatures and authentication are outside
-  this preview; an untrusted peer could forge exhaustion metadata and suppress retries.
-- **Transport:** preview.1 coordinates HTTP failures where a response exists and can carry
-  metadata. Connection failures, DNS failures, transport exceptions, some timeouts, cancellation,
-  and an already-open circuit breaker provide no response to mark. They follow Microsoft's
-  existing behavior and are not coordinated. Mapping them to a 500 does not establish exhaustion.
-- **Scope:** only the standard HTTP retry handler is integrated. Hedging, gRPC, queues,
-  distributed budgets, retry ownership, and arbitrary exception graphs are outside this PoC.
-- **Semantics:** applications choose whether they are forwarding the same failure. The library
-  cannot infer causality after application code transforms or aggregates outcomes.
-- **Compatibility:** .NET 8 and .NET 10 are supported. The public API and wire format are
-  provisional. All participating services must understand the RetryMesh header names.
-
-## Build a package for manual upload
-
-From the repository root:
+## Package and compatibility
 
 ```powershell
-dotnet restore
-dotnet build -c Release
-dotnet test -c Release
-dotnet pack -c Release -o ./artifacts
+dotnet pack -c Release -o artifacts
 ```
 
-The uploadable file is:
+Generated package: `artifacts/RetryMesh.Http.0.1.0-preview.2.nupkg`. Only the library is packable.
+It contains net8.0/net10.0 assemblies, README and MIT license, and depends on
+Microsoft.Extensions.Http.Resilience 10.0.0. It references Microsoft.AspNetCore.App; non-web
+consumers need that framework reference and runtime. Nothing is published by this change.
+Preview.1 remains unchanged on NuGet.
 
-```text
-artifacts/RetryMesh.Http.0.1.0-preview.1.nupkg
-```
-
-Only the library is packable. The package contains both target-framework assemblies,
-MIT metadata, the LICENSE, and this README. Its only package dependency is
-`Microsoft.Extensions.Http.Resilience` (minimum version 10.0.0), with transitive dependencies
-managed by NuGet. Samples, tests, and local artifacts are excluded. Generated packages and
-smoke-test outputs are ignored by Git. CI builds and uploads this file as an Actions artifact
-on Windows and Linux; it does not publish or create releases.
-
-To consume the package locally, add the absolute path to `artifacts` as a NuGet source,
-alongside nuget.org for Microsoft’s dependencies, then install the exact preview version:
-
-```sh
-dotnet add package RetryMesh.Http --version 0.1.0-preview.1
-```
-
-For manual publication, sign in to NuGet.org, choose **Upload Package**, select the `.nupkg`,
-review its metadata and ownership, and publish it yourself. Availability of the package ID
-and permissions for your NuGet account are checked by NuGet.org during upload. No API key,
-publishing secret, tag, or automated release is needed by this repository.
-
-Before a stable release, review API and protocol compatibility, add broader concurrency and
-transport coverage, and evaluate the ASP.NET framework dependency. This remains a preview
-of response-based retry coordination.
+Changes from preview.1: downstream claims require explicit trust; HttpClient UseRetryMesh automatically
+registers request access and defaults to automatic propagation when middleware is installed; RetryMeshFailureResult
+also supports MVC. Existing service-name overloads and wire headers remain compatible, but previously
+implicit trusted-client behavior requires `TrustDownstreamMetadata = true`. The public API is provisional.

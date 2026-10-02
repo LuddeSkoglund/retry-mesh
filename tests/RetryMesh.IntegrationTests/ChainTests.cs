@@ -10,9 +10,10 @@ public class ChainTests
     [Theory]
     [InlineData(false, 9)]
     [InlineData(true, 3)]
-    public async Task RealSampleChainHasExactCounts(bool enabled, int expected)
+    [InlineData(true, 3, true)]
+    public async Task RealSampleChainHasExactCounts(bool enabled, int expected, bool fakeExternal = false)
     {
-        await using var c = ServiceCHost.Build(["--urls=http://127.0.0.1:0"]);
+        await using var c = ServiceCHost.Build(["--urls=http://127.0.0.1:0", $"--FakeMetadata={fakeExternal}"]);
         await c.StartAsync();
         await using var b = ServiceBHost.Build(["--urls=http://127.0.0.1:0",
             $"--Downstream:BaseUrl={c.Urls.Single()}", $"--RetryMesh:Enabled={enabled}"]);
@@ -25,6 +26,8 @@ public class ChainTests
         reset.EnsureSuccessStatusCode();
         using var response = await client.GetAsync($"{a.Urls.Single()}/execute");
         Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        Assert.Equal(1, a.Services.GetRequiredService<ServiceACounter>().Count);
+        Assert.Equal(enabled ? 1 : 3, b.Services.GetRequiredService<ServiceBCounter>().Count);
         Assert.Equal(expected, c.Services.GetRequiredService<RequestCounter>().Count);
         var stats = await client.GetFromJsonAsync<Stats>($"{c.Urls.Single()}/stats");
         Assert.Equal(expected, stats!.RequestCount);

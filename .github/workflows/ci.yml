@@ -20,4 +20,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: nuget-preview-${{ matrix.os }}
-          path: artifacts/RetryMesh.Http.0.1.0-preview.1.nupkg
+          path: artifacts/RetryMesh.Http.0.1.0-preview.2.nupkg
