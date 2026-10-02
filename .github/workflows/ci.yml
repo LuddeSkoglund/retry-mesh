@@ -2,7 +2,10 @@ name: CI
 on: [push, pull_request]
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -14,5 +17,5 @@ jobs:
       - run: dotnet pack -c Release --no-build -o artifacts/packages
       - uses: actions/upload-artifact@v4
         with:
-          name: nuget-preview
+          name: nuget-preview-${{ matrix.os }}
           path: artifacts/packages/*.nupkg

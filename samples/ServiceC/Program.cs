@@ -13,6 +13,9 @@ public static class ServiceCHost
     public static WebApplication Build(string[] args)
     {
         var builder = WebApplication.CreateBuilder(args);
+        // Keep the standalone demo independent of Windows Event Log write permissions.
+        builder.Logging.ClearProviders();
+        builder.Logging.AddConsole();
         builder.Services.AddSingleton<RequestCounter>();
         var app = builder.Build();
         app.MapGet("/fail", (RequestCounter counter, ILoggerFactory logs) =>
