@@ -2,17 +2,17 @@
 
 **Retry locally. Propagate globally.**
 
-RetryMesh.Http **0.1.0-preview.2** coordinates Microsoft's existing HTTP retry policy across .NET 8 and .NET 10 services. Configure HttpClients, add middleware, and leave MVC controllers and Minimal API endpoints alone.
+RetryMesh.Http **0.1.0** coordinates Microsoft's existing HTTP retry policy across .NET 8 and .NET 10 services. Configure HttpClients, add middleware, and leave MVC controllers and Minimal API endpoints alone.
 
 With two retries at A and B (three total attempts each), the real MVC A → B → C integration tests verify **A/B/C = 1/3/9 without coordination and 1/1/3 with RetryMesh**. The controllers contain no RetryMesh code.
 
 ## Automatic propagation: normal setup
 
-Install the package from your configured NuGet feed. For this locally built preview,
-add `artifacts` as a local NuGet source, then use:
+Install the package from your configured NuGet feed once published. For local testing before
+publication, add `artifacts/packages` as a local NuGet source, then use:
 
 ```sh
-dotnet add package RetryMesh.Http --version 0.1.0-preview.2
+dotnet add package RetryMesh.Http --version 0.1.0
 ```
 
 ```csharp
@@ -31,6 +31,8 @@ builder.Services
 
 var app = builder.Build();
 app.UseExceptionHandler("/error"); // Configure your exception endpoint.
+app.UseRouting();
+// Existing authentication/authorization middleware goes here, if used.
 app.UseRetryMesh();                 // After exception handling, before endpoints.
 app.MapControllers();
 ```
@@ -103,6 +105,10 @@ metadata for **ServiceB, 3 attempts**, with a new failure ID. A accepts B's clai
 retries. C receives exactly **3 calls**. Removing untrusted protocol headers also prevents the
 explicit result from forwarding those claims from a RetryMesh-enabled client.
 
+With partial adoption, normal retry behavior continues. If B has no RetryMesh and drops metadata,
+A cannot infer B's downstream exhaustion; the chain can still produce 9 calls. If only B adopts,
+B creates valid metadata but an unconfigured A ignores it and can likewise cause 9 calls.
+
 ## Automatic policy and limitations
 
 Propagation defaults to `RetryMeshPropagationMode.Automatic`. This default serves common
@@ -136,6 +142,10 @@ OnStarting also checks IExceptionHandlerFeature, covering an inner ASP.NET excep
 Exception-handler re-execution preserves invalidated state. Tests exercise both orders and path
 re-execution. Custom middleware swallowing exceptions without the standard feature cannot be detected
 if it runs inside RetryMesh.
+Routing and authentication/authorization can run before RetryMesh; this is the recommended order
+shown above. Real-host tests also cover RetryMesh before routing or authentication without false
+propagation. Middleware placed after terminal endpoint dispatch never executes, so automatic
+propagation is unavailable. Keep authentication/authorization ahead of endpoint execution.
 
 **Fundamental ambiguity:** C exhausts with 500; application code then intentionally returns an
 unrelated `StatusCode(500)`. Object identity has been discarded. Without observed invalidation,
@@ -147,11 +157,15 @@ Candidate access is protected by a lock and multiple matching parallel failures 
 This is not a general causal model for concurrent or detached work. Await downstream work before
 starting the response. A response already started cannot be changed retroactively or have its
 headers withdrawn after a later exception.
+For parallel branches, a success completing after exhaustion invalidates pending candidates even
+when the success belongs to an independent branch. A success completing before the exhausted
+candidate does not invalidate that later candidate. This deliberately conservative completion
+rule can cause false negatives; use explicit selection when branch identity matters.
 
 Coordination is **response-based**. Transport/DNS failures, cancellation, timeouts and open circuit
 breakers without a response cannot create exhaustion metadata. Mapping them to 500 does not establish
 exhaustion. Only the standard HTTP resilience retry strategy is supported; hedging, gRPC, queues,
-distributed retry budgets and arbitrary exception graphs are outside this preview.
+distributed retry budgets and arbitrary exception graphs are outside this release.
 
 ## Explicit failure identity
 
@@ -210,6 +224,11 @@ The demo starts real MVC sample hosts on temporary localhost ports, asserts exac
 disposes them. It prints 9 → 3 only after tests pass. Samples use console logging without requiring
 Windows Event Log permissions. There is no Docker or external infrastructure requirement.
 
+The adversarial release matrix is in [docs/release-gate-0.1.0.md](docs/release-gate-0.1.0.md).
+`./scripts/release-gate-package.ps1` packs and inspects the package, then builds and runs real
+net8.0/net10.0 consumers using only PackageReference and an isolated NuGet cache. Generated
+consumers and logs stay under `artifacts`. These checks never publish a package or create a release.
+
 Run manually in three terminals from the repository root:
 
 ```sh
@@ -228,16 +247,20 @@ forged external claims demonstration.
 ## Package and compatibility
 
 ```powershell
-dotnet pack -c Release -o artifacts
+dotnet pack -c Release -o artifacts/packages
 ```
 
-Generated package: `artifacts/RetryMesh.Http.0.1.0-preview.2.nupkg`. Only the library is packable.
+Generated package: `artifacts/packages/RetryMesh.Http.0.1.0.nupkg`. Only the library is packable.
 It contains net8.0/net10.0 assemblies, README and MIT license, and depends on
 Microsoft.Extensions.Http.Resilience 10.0.0. It references Microsoft.AspNetCore.App; non-web
 consumers need that framework reference and runtime. Nothing is published by this change.
-Preview.1 remains unchanged on NuGet.
+Previously published previews remain unchanged on NuGet.
 
 Changes from preview.1: downstream claims require explicit trust; HttpClient UseRetryMesh automatically
 registers request access and defaults to automatic propagation when middleware is installed; RetryMeshFailureResult
 also supports MVC. Existing service-name overloads and wire headers remain compatible, but previously
-implicit trusted-client behavior requires `TrustDownstreamMetadata = true`. The public API is provisional.
+implicit trusted-client behavior requires `TrustDownstreamMetadata = true`.
+
+For a manual GitHub release, merge the release PR first, create tag `v0.1.0` against the merged
+main commit, use [the release notes](docs/release-notes-0.1.0.md), and upload the `.nupkg` and its
+SHA-256 checksum as assets. Uploading assets to GitHub does not publish the package to NuGet.

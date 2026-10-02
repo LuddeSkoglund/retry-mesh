@@ -4,7 +4,7 @@
     <IsPackable>true</IsPackable>
     <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
     <PackageId>RetryMesh.Http</PackageId>
-    <Version>0.1.0-preview.2</Version>
+    <Version>0.1.0</Version>
     <Authors>LuddeSkoglund</Authors>
     <Description>Prevent retry amplification across .NET microservices by propagating downstream retry exhaustion.</Description>
     <PackageTags>retry;resilience;microservices;http;distributed-systems;dotnet</PackageTags>
