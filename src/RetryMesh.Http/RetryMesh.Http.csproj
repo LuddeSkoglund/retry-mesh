@@ -4,10 +4,12 @@
     <IsPackable>true</IsPackable>
     <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
     <PackageId>RetryMesh.Http</PackageId>
+    <Title>RetryMesh.Http</Title>
     <Version>0.1.0</Version>
     <Authors>LuddeSkoglund</Authors>
-    <Description>Prevent retry amplification across .NET microservices by propagating downstream retry exhaustion.</Description>
-    <PackageTags>retry;resilience;microservices;http;distributed-systems;dotnet</PackageTags>
+    <Description>Prevent retry storms and retry amplification across .NET microservices. Coordinate retries between services using Microsoft.Extensions.Http.Resilience without replacing your existing resilience pipeline.</Description>
+    <PackageTags>retry;retries;retry-storm;retry-amplification;resilience;microservices;distributed-systems;http;httpclient;aspnetcore;dotnet;polly;microsoft-extensions-http-resilience</PackageTags>
+    <PackageProjectUrl>https://github.com/LuddeSkoglund/retry-mesh</PackageProjectUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/LuddeSkoglund/retry-mesh</RepositoryUrl>
     <RepositoryType>git</RepositoryType>

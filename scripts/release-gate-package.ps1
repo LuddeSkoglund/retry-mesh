@@ -32,6 +32,11 @@ try {
     $reader = [System.IO.StreamReader]::new($zip.GetEntry('RetryMesh.Http.nuspec').Open())
     try { [xml]$manifest = $reader.ReadToEnd() } finally { $reader.Dispose() }
     if ($manifest.package.metadata.version -ne $version) { throw 'Package version mismatch' }
+    if ($manifest.package.metadata.id -ne 'RetryMesh.Http' -or $manifest.package.metadata.title -ne 'RetryMesh.Http') { throw 'Package identity mismatch' }
+    if ($manifest.package.metadata.description -ne [string]$project.Project.PropertyGroup.Description) { throw 'Package description mismatch' }
+    $packedTags = @(([string]$manifest.package.metadata.tags) -split '\s+' | Where-Object { $_ })
+    $expectedTags = @(([string]$project.Project.PropertyGroup.PackageTags) -split ';')
+    if (@(Compare-Object $expectedTags $packedTags).Count -ne 0) { throw 'Package search tags mismatch' }
     if ($manifest.package.metadata.license.type -ne 'expression' -or $manifest.package.metadata.license.InnerText -ne 'MIT') { throw 'MIT license metadata missing' }
     if ($manifest.package.metadata.repository.url -ne 'https://github.com/LuddeSkoglund/retry-mesh') { throw 'Repository metadata missing' }
     if ($manifest.package.metadata.repository.type -ne 'git' -or !$manifest.package.metadata.repository.commit) { throw 'Git repository metadata missing' }

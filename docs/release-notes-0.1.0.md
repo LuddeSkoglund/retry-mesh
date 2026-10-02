@@ -17,6 +17,7 @@ amplification. With two retries per service, real HTTP tests show 9 → 3 calls 
 - Explicit propagation through `RetryMeshFailureResult` for MVC and Minimal APIs.
 - Defensive protocol parsing, request-local snapshots and structured ILogger events.
 - Existing Microsoft retry predicates, callbacks, timeouts, circuit breakers and rate limiting remain active.
+- Search-oriented NuGet metadata, a shorter onboarding README and documented trust/scope tradeoffs.
 
 ## Validation
 
@@ -50,3 +51,10 @@ The HTTP wire headers remain unchanged. Non-web consumers still require Microsof
 After merging the release PR, create a GitHub release with tag `v0.1.0` targeting the merged main
 commit. Use the notes above and upload `RetryMesh.Http.0.1.0.nupkg` and its `.sha256` file; the ZIP
 bundle can also be attached. Publishing a GitHub release does not publish to NuGet.
+
+## Manual NuGet upload
+
+Upload the final `RetryMesh.Http.0.1.0.nupkg` to NuGet.org, review its ID, version, README and
+metadata, then publish manually. This branch prepares the first stable 0.1.0 package; published
+preview versions are not replaced. See `docs/github-discoverability.md` for recommended repository
+settings and `docs/launch.md` for unposted launch drafts.
