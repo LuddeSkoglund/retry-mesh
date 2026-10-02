@@ -24,7 +24,7 @@ builder.Services
     {
         options.Retry.MaxRetryAttempts = 2;
     })
-    .UseRetryMesh("CheckoutService", options =>
+    .UseRetryMesh(options =>
     {
         options.TrustDownstreamMetadata = true;
     });
@@ -41,7 +41,7 @@ app.MapControllers();
 builder.Services.AddHttpClient("ServiceC", client =>
     client.BaseAddress = new Uri("http://localhost:5103"))
     .AddStandardResilienceHandler(options => options.Retry.MaxRetryAttempts = 2)
-    .UseRetryMesh("ServiceB"); // Untrusted downstream by default.
+    .UseRetryMesh(); // Untrusted downstream by default.
 ```
 
 Existing MVC controllers stay ordinary:
@@ -63,6 +63,16 @@ client call and `app.UseRetryMesh()`. `AddRetryMesh(options => ...)` is optional
 the propagation policy. Multiple clients do not duplicate core registrations or overwrite
 explicit policy configuration, regardless of registration order.
 
+The service name is optional. RetryMesh uses `IHostEnvironment.ApplicationName` (normally your
+application's assembly name), and falls back to the entry assembly's simple name outside a host.
+All clients in the application use that same service identity; it is not the downstream client's
+name or a machine/container instance name. To override it, use
+`.UseRetryMesh("CheckoutService", options => options.TrustDownstreamMetadata = true)`.
+Explicit names still work outside a host and take precedence over the inferred name.
+Names must contain 1–128 ASCII letters, digits, dots, underscores or hyphens. If the inferred
+name is missing or invalid, pipeline initialization reports an error asking for an explicit name;
+RetryMesh does not silently rewrite service identity.
+
 RetryMesh wraps only `Retry.ShouldHandle`, preserving the original predicate and OnRetry callback.
 There is no additional retry handler or handwritten retry loop. Microsoft.Extensions.Http.Resilience
 10.0.0 retains responsibility for retries, timeouts, circuit breaking, rate limiting and telemetry.
@@ -73,10 +83,10 @@ Trust is configured **per HttpClient** and defaults to **false**:
 
 ```csharp
 // A → internal B: accept B's exhaustion claims.
-.UseRetryMesh("ServiceA", options => options.TrustDownstreamMetadata = true);
+.UseRetryMesh(options => options.TrustDownstreamMetadata = true);
 
 // B → external C: ignore C's claims, create metadata for B's own exhaustion.
-.UseRetryMesh("ServiceB", options => options.TrustDownstreamMetadata = false);
+.UseRetryMesh(); // TrustDownstreamMetadata defaults to false.
 ```
 
 `true` means another trusted RetryMesh service; `false` means external or untrusted.

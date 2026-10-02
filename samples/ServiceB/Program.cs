@@ -7,7 +7,7 @@ public static class ServiceBHost
 {
     public static WebApplication Build(string[] args)
     {
-        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = args, ApplicationName = typeof(ServiceBHost).Assembly.FullName });
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = args, ApplicationName = typeof(ServiceBHost).Assembly.GetName().Name });
         // Keep the standalone demo independent of Windows Event Log write permissions.
         builder.Logging.ClearProviders();
         builder.Logging.AddConsole();
@@ -28,7 +28,7 @@ public static class ServiceBHost
                     return default;
                 };
             });
-        if (enabled) retry.UseRetryMesh("ServiceB", options => options.TrustDownstreamMetadata = false);
+        if (enabled) retry.UseRetryMesh();
         var app = builder.Build();
         app.UseExceptionHandler(handler => handler.Run(context =>
         {
