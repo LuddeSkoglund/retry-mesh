@@ -38,12 +38,17 @@ repository and framework/dependency metadata. The README is packed without chang
 
 | Badge | Endpoint | Observed result |
 | --- | --- | --- |
-| Published NuGet version, including previews | `https://img.shields.io/nuget/vpre/RetryMesh.Http` | HTTP 200 SVG; `v0.1.0-preview.3` |
+| Repository package version | `https://img.shields.io/badge/version-0.1.0-blue.svg` | HTTP 200 SVG; `0.1.0`, matching the project version |
 | Main branch CI | `https://github.com/LuddeSkoglund/retry-mesh/actions/workflows/ci.yml/badge.svg?branch=main` | HTTP 200 SVG; passing |
 | MIT license | `https://img.shields.io/badge/license-MIT-blue.svg` | HTTP 200 SVG; MIT |
 
-The dynamic version badge shows the published feed, not the unuploaded stable artifact. NuGet's
-version index contained preview.1, preview.2 and preview.3; **0.1.0 was not published** at this check.
+The README version badge shows the stable package version prepared in this repository and links
+to its release notes. Update it when the project version changes. It does not claim that the
+package has been published to NuGet. NuGet's version index contained preview.1, preview.2 and
+preview.3; **0.1.0 was not published** at this check. Both the `nuget/vpre` and `nuget/v` endpoints
+returned `v0.1.0-preview.3` while no stable version was available, so changing only that endpoint
+would still display a preview. After publishing 0.1.0, a separate published-version badge can use
+`https://img.shields.io/nuget/v/RetryMesh.Http` and link to the NuGet package page.
 No download badge or hardcoded count was added. Main's CI badge is not a claim about release-branch
 checks. The MIT badge is supported by the repository license and package license expression.
 

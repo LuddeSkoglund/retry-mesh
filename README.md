@@ -1,6 +1,6 @@
 # RetryMesh
 
-[![NuGet version](https://img.shields.io/nuget/vpre/RetryMesh.Http)](https://www.nuget.org/packages/RetryMesh.Http)
+[![Version 0.1.0](https://img.shields.io/badge/version-0.1.0-blue.svg)](docs/release-notes-0.1.0.md)
 [![CI](https://github.com/LuddeSkoglund/retry-mesh/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/LuddeSkoglund/retry-mesh/actions/workflows/ci.yml)
 [![MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/LuddeSkoglund/retry-mesh/blob/main/LICENSE)
 
