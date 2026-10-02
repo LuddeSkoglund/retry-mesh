@@ -16,8 +16,10 @@ jobs:
       - run: dotnet restore
       - run: dotnet build -c Release --no-restore
       - run: dotnet test -c Release --no-build
-      - run: dotnet pack -c Release --no-build -o artifacts
+      - run: dotnet pack -c Release --no-build -o artifacts/packages
+      - run: ./scripts/release-gate-package.ps1 -SkipPack
+        shell: pwsh
       - uses: actions/upload-artifact@v4
         with:
-          name: nuget-preview-${{ matrix.os }}
-          path: artifacts/RetryMesh.Http.0.1.0-preview.2.nupkg
+          name: nuget-0.1.0-${{ matrix.os }}
+          path: artifacts/packages/RetryMesh.Http.0.1.0.nupkg
